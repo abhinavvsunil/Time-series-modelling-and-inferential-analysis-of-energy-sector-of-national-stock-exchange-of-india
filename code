@@ -1,0 +1,64 @@
+#LSTM
+
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+
+df = pd.read_excel("D:/SET/NSE_with_indicators.xlsx")
+df = df.dropna(subset=["Log Return"]).reset_index(drop=True)
+
+# Fill indicator NaNs
+indicator_cols = ['SMA_20', 'RSI_14', 'MACD', 'MACDh', 'MACDs',
+                  'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0']
+df[indicator_cols] = df[indicator_cols].fillna(method='ffill')
+
+# Filter one company for now (or loop later)
+df = df[df["Company"] == "ADANI POWER"].sort_values("Date")
+
+lags = 3
+features = ['Price', 'Volume'] + indicator_cols
+for col in features:
+    for lag in range(1, lags + 1):
+        df[f"{col}_lag{lag}"] = df[col].shift(lag)
+
+df = df.dropna().reset_index(drop=True)
+
+from sklearn.model_selection import train_test_split
+import numpy as np
+
+X = df[[col for col in df.columns if "lag" in col]].values
+y = df["Log Return"].values
+
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Reshape for LSTM: (samples, time steps, features)
+X_scaled = X_scaled.reshape((X_scaled.shape[0], lags, int(X_scaled.shape[1] / lags)))
+
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, shuffle=False)
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+
+model = Sequential([
+    LSTM(64, input_shape=(X_train.shape[1], X_train.shape[2])),
+    Dense(1)
+])
+model.compile(optimizer='adam', loss='mse')
+model.fit(X_train, y_train, epochs=50, batch_size=16, validation_split=0.1)
+
+import matplotlib.pyplot as plt
+
+pred = model.predict(X_test)
+# Recover date range for the test set
+date_series = df["Date"].iloc[-len(y_test):]
+
+plt.figure(figsize=(10, 4))
+plt.plot(date_series, y_test, label="True")
+plt.plot(date_series, pred, label="Predicted")
+plt.xticks(rotation=45)
+plt.xlabel("Date")
+plt.ylabel("Log Return")
+plt.title("Log Return Prediction")
+plt.legend()
+plt.tight_layout()
+plt.show()
